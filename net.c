@@ -6,6 +6,7 @@
 
 #include "util.h"
 #include "net.h"
+#include "ip.h"
 
 struct net_protocol
 {
@@ -20,6 +21,52 @@ struct net_protocol
  */
 static struct net_device *devices;
 static struct net_protocol *protocols;
+
+int net_protocol_register(uint16_t type, net_protocol_handler_t handler)
+{
+    struct net_protocol *proto;
+
+    for (proto = protocols; proto != NULL; proto = proto->next)
+    {
+        if (proto->type == type)
+        {
+            errorf("protocol type 0x%04x is already registered", type);
+            return -1;
+        }
+    }
+
+    proto = (struct net_protocol *)memory_alloc(sizeof(struct net_protocol));
+    if (!proto)
+    {
+        errorf("memory_alloc() failure");
+        return -1;
+    }
+
+    proto->type = type;
+    proto->handler = handler;
+    proto->next = protocols;
+    protocols = proto;
+
+    infof("success, type=0x%04x", type);
+    return 0;
+}
+
+int net_input(uint16_t type, const uint8_t *data, size_t len, struct net_device *dev)
+{
+    struct net_protocol *proto;
+    debugf("dev=%s, type=0x%04x, len=%zu", dev->name, type, len);
+    debugdump(data, len);
+    for (proto = protocols; proto != NULL; proto = proto->next)
+    {
+        if (proto->type == type)
+        {
+            proto->handler(data, len, dev);
+            return 0;
+        }
+    }
+    errorf("protocol type 0x%04x is not registered", type);
+    return 0;
+}
 
 struct net_device *
 net_device_alloc(void)
@@ -124,26 +171,18 @@ int net_device_output(struct net_device *dev, uint16_t type, const uint8_t *data
     return 0;
 }
 
-/*
- * NOTE: must not be call after net_run()
- */
-int net_protocol_register(uint16_t type, net_protocol_handler_t handler)
-{
-}
-
-int net_input(uint16_t type, const uint8_t *data, size_t len, struct net_device *dev)
-{
-    debugf("dev=%s, type=0x%04x, len=%zu", dev->name, type, len);
-    debugdump(data, len);
-    return 0;
-}
-
 int net_init(void)
 {
     infof("initialize...");
     if (platform_init() == -1)
     {
         errorf("platform initialization failed");
+        return -1;
+    }
+
+    if (ip_init() == -1)
+    {
+        errorf("ip_init() failure");
         return -1;
     }
 
